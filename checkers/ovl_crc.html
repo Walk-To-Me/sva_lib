@@ -1,0 +1,65 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ovl_crc — CRC 参考计算与比较 · OVL 中文手册</title><link rel="stylesheet" href="../assets/style.css"></head><body><header><small>OVL 2.8.1 / 源码对照手册</small><nav><a href="../index.html">分类目录</a><a href="../common.html">接入与 formal 指南</a><a href="../errata.html">实现差异与易错点</a><a href="../legacy.html">旧版接口</a></nav></header><main><h1>ovl_crc — CRC 参考计算与比较</h1><span class="tag">位编码、互斥与数据完整性</span> <span class="tag">OVL V2 接口</span><p class="lead">内部计算 CRC，并在 compare 触发时与输入校验值比较。</p><nav class="toc"><a href="#semantics">语义</a><a href="#parameters">参数</a><a href="#ports">端口</a><a href="#examples">例子</a><a href="#formal">Formal</a><a href="#sva">SVA 属性</a><a href="#source">来源</a></nav><h2 id="semantics">1. 检查语义与触发时机</h2><p>initialize 设置内部初值；valid 控制数据装载。crc_enable 决定从 crc 专用端口还是 test_expr 数据流取待比较 CRC；还支持位序、字节序、反转、反相及锁存。</p><p>多项式正确还不够：initial_value、反射/端序、最终反相和 compare/valid 时序必须一致；先用 golden vector 标定。</p><p>以下说明以随包 SVA 实现为重点。复位后的首次有效采样、历史状态有效位以及 generate 条件会影响检查起点；属性原文与完整源码可在本页下方对照。</p><h2 id="parameters">2. 完整参数表</h2><p>按 wrapper 声明顺序列出。默认表达式逐字取自源码；宏的最终值可被编译选项或用户头文件覆盖。标为内部/派生参数的条目不建议手动覆盖。</p><div class="scroll"><table><thead><tr><th>参数</th><th>源码默认值</th><th>作用与配置注意</th></tr></thead><tbody><tr><td><code>severity_level</code></td><td><code>`OVL_SEVERITY_DEFAULT</code></td><td>失败报告的严重级别：OVL_FATAL、OVL_ERROR、OVL_WARNING、OVL_INFO；不是改变逻辑正确性的开关。</td></tr><tr><td><code>width</code></td><td><code>1</code></td><td>被检查数据/向量的位宽；对于 arbiter 是通道数，对于 CRC 是输入分片位宽。</td></tr><tr><td><code>data_width</code></td><td><code>0</code></td><td>存储器数据宽度；CRC 中为完整数据项宽度，0 表示采用输入 width。</td></tr><tr><td><code>crc_width</code></td><td><code>5</code></td><td>CRC 寄存器与校验值位宽。</td></tr><tr><td><code>crc_enable</code></td><td><code>0</code></td><td>1 从 crc 专用输入取比较值；0 从 test_expr 数据流取 CRC。</td></tr><tr><td><code>crc_latch_enable</code></td><td><code>0</code></td><td>是否使用 crc_latch 将内部结果锁存后再比较。</td></tr><tr><td><code>polynomial</code></td><td><code>5</code></td><td>自定义 CRC 生成多项式编码；需按 LRM 的最高项约定填写。</td></tr><tr><td><code>standard_polynomial</code></td><td><code>0</code></td><td>选择内建标准多项式编码；非默认配置应核对 LRM 列表和源码 case。</td></tr><tr><td><code>initial_value</code></td><td><code>0</code></td><td>initialize 时装载到 CRC 参考寄存器的初值。</td></tr><tr><td><code>lsb_first</code></td><td><code>0</code></td><td>数据项的位输入顺序配置。</td></tr><tr><td><code>big_endian</code></td><td><code>0</code></td><td>数据项字节序配置。</td></tr><tr><td><code>reverse_endian</code></td><td><code>0</code></td><td>CRC 比较值端序反转配置。</td></tr><tr><td><code>invert</code></td><td><code>0</code></td><td>CRC 结果反相配置。</td></tr><tr><td><code>combinational</code></td><td><code>0</code></td><td>选择组合 CRC 检查行为；与逐拍累计消息模式不同。</td></tr><tr><td><code>property_type</code></td><td><code>`OVL_PROPERTY_DEFAULT</code></td><td>选择 OVL_ASSERT、OVL_ASSUME、OVL_IGNORE 或二态变体；只有支持的后端才把 ASSUME 实现为形式约束。不要把 DUT 要求改为 assume 来消除失败。</td></tr><tr><td><code>msg</code></td><td><code>`OVL_MSG_DEFAULT</code></td><td>实例的诊断文本，建议包含被检查接口与需求名称。</td></tr><tr><td><code>coverage_level</code></td><td><code>`OVL_COVER_DEFAULT</code></td><td>覆盖层级位掩码；NONE=0、SANITY=1、BASIC=2、CORNER=4、STATISTIC=8、ALL=15。同时受 OVL_COVER_ON 控制。</td></tr><tr><td><code>clock_edge</code></td><td><code>`OVL_CLOCK_EDGE_DEFAULT</code></td><td>checker 的时钟有效沿：OVL_POSEDGE、OVL_NEGEDGE 等；各后端支持情况需核对。</td></tr><tr><td><code>reset_polarity</code></td><td><code>`OVL_RESET_POLARITY_DEFAULT</code></td><td>复位有效电平：OVL_ACTIVE_LOW 或 OVL_ACTIVE_HIGH；不要因端口名为 reset 就默认高有效。</td></tr><tr><td><code>gating_type</code></td><td><code>`OVL_GATING_TYPE_DEFAULT</code></td><td>OVL_GATE_CLOCK 暂停时钟采样；OVL_GATE_RESET 用 enable 参与复位；OVL_NONE 不使用门控。暂停与清空历史不是同一语义。</td></tr><tr><td><code>assert_name</code></td><td><code>&quot;OVL_CRC&quot;</code></td><td>内部诊断标识。源码注明不应修改。</td></tr></tbody></table></div><h2 id="ports">3. 完整端口表</h2><div class="scroll"><table><thead><tr><th>端口</th><th>方向</th><th>位宽表达式</th><th>连接含义</th></tr></thead><tbody><tr><td><code>clock</code></td><td>input</td><td><code>1 bit</code></td><td>采样时钟；有效沿由 clock_edge 决定。</td></tr><tr><td><code>reset</code></td><td>input</td><td><code>1 bit</code></td><td>checker 复位输入；有效电平由 reset_polarity 决定。</td></tr><tr><td><code>enable</code></td><td>input</td><td><code>1 bit</code></td><td>OVL V2 门控输入，意义由 gating_type 决定；不一定只是 disable iff。</td></tr><tr><td><code>test_expr</code></td><td>input</td><td><code>[width-1:0]</code></td><td>被检查的表达式/数据，具体触发与比较规则见本页。</td></tr><tr><td><code>initialize</code></td><td>input</td><td><code>1 bit</code></td><td>初始化 CRC 参考状态。</td></tr><tr><td><code>crc</code></td><td>input</td><td><code>[crc_width-1:0]</code></td><td>crc_enable=1 时使用的外部 CRC 比较值。</td></tr><tr><td><code>compare</code></td><td>input</td><td><code>1 bit</code></td><td>启动 CRC 比较。</td></tr><tr><td><code>valid</code></td><td>input</td><td><code>1 bit</code></td><td>数据流当前片段有效。</td></tr><tr><td><code>crc_latch</code></td><td>input</td><td><code>1 bit</code></td><td>启用锁存模式时锁存内部 CRC。</td></tr><tr><td><code>fire</code></td><td>output</td><td><code>[`OVL_FIRE_WIDTH-1 : 0]</code></td><td>事件汇总输出；部分 wrapper 在 SVA 分支将其绑零，见本页实现提示。</td></tr></tbody></table></div><h2 id="examples">4. 合法与违例场景</h2><div class="grid"><div class="card pass"><h3>合法 / 期望覆盖场景</h3><p>输入已知消息，并提供按完全相同 CRC 约定计算的校验码。</p></div><div class="card fail"><h3>违例 / 覆盖缺口场景</h3><p>数据不变而将预期 CRC 任意翻转一位。</p></div></div><p>示例中的周期指 checker 的有效采样沿；“变化”通常指相邻采样值变化。场景是语义说明，不代表下面保留默认参数的模板已配置成该场景。</p><h3>命名参数 / 命名端口连接模板</h3><p>这是接线片段，不是独立可运行的 testbench。需声明并驱动信号，设置实际宽度、复位极性、延迟及检查开关，再将 wrapper 加入编译列表。<a href="../examples/ovl_crc.sv">下载 SV 模板</a>。</p><pre><code>// Interface template only; not a standalone testbench.
+// Override dimensions/timing/check enables to match the DUT.
+`include &quot;std_ovl_defines.h&quot;
+ovl_crc #(
+  .severity_level(`OVL_SEVERITY_DEFAULT),
+  .width(1),
+  .data_width(0),
+  .crc_width(5),
+  .crc_enable(0),
+  .crc_latch_enable(0),
+  .polynomial(5),
+  .standard_polynomial(0),
+  .initial_value(0),
+  .lsb_first(0),
+  .big_endian(0),
+  .reverse_endian(0),
+  .invert(0),
+  .combinational(0),
+  .property_type(`OVL_PROPERTY_DEFAULT),
+  .msg(`OVL_MSG_DEFAULT),
+  .coverage_level(`OVL_COVER_DEFAULT),
+  .clock_edge(`OVL_CLOCK_EDGE_DEFAULT),
+  .reset_polarity(`OVL_RESET_POLARITY_DEFAULT),
+  .gating_type(`OVL_GATING_TYPE_DEFAULT)
+) u_ovl_crc (
+  .clock(clk),
+  .reset(rst_n),
+  .enable(1&#x27;b1),
+  .test_expr(test_expr),
+  .initialize(initialize),
+  .crc(crc),
+  .compare(compare),
+  .valid(valid),
+  .crc_latch(crc_latch),
+  .fire()
+);
+</code></pre><h2 id="formal">5. Formal 接入与判读</h2><p>多项式正确还不够：initial_value、反射/端序、最终反相和 compare/valid 时序必须一致；先用 golden vector 标定。</p><ul><li>验证 DUT 的要求使用 OVL_ASSERT；只有外部环境协议才适合作为 OVL_ASSUME。先检查 elaboration 后生成的属性数量与类型。</li><li>复位应初始化 checker 的历史状态和参考模型；不要永久拉住复位或 enable=0。确认触发事件可达，避免 antecedent 永远为假的空证明。</li><li>将安全断言结果、超时/未决结果与 cover 可达性分别记录。仿真跑过若干波形不等于形式证明。</li></ul><p class="note">此 wrapper 的 SVA 分支将 fire 绑为 0。不能用 fire==0 证明检查通过；必须读取工具中的原生 assert/assume/cover 结果。</p><p>更多复位、门控、X/Z 与编译宏说明见 <a href="../common.html">公共接入指南</a>。本页没有声称所有配置均在 VC Formal 上经过编译或证明。</p><h2 id="sva">6. 属性、诊断与覆盖</h2><p>下面是源码中的命名 property 定义，包含宏分支；同名属性可在互斥 generate 分支中出现。它们不是“全部同时启用”的断言清单。实际启用条件、参考状态更新及 assert/assume 实例请看完整源码。</p><details><summary>OVL_CRC_CHECK_P</summary><pre><code>property OVL_CRC_CHECK_P;
+  @(posedge clock)
+    disable iff (`OVL_RESET_SIGNAL != 1&#x27;b1)
+      (crc_check_fire_combo == 1&#x27;b0);
+  endproperty</code></pre></details><details><summary>OVL_CRC_XZ_IN_TEST_EXPR_P</summary><pre><code>property OVL_CRC_XZ_IN_TEST_EXPR_P;
+  @(posedge clock)
+    disable iff (`OVL_RESET_SIGNAL != 1&#x27;b1)
+      (!($isunknown(test_expr)));
+  endproperty</code></pre></details><details><summary>OVL_CRC_XZ_IN_START_CRC_P</summary><pre><code>property OVL_CRC_XZ_IN_START_CRC_P;
+  @(posedge clock)
+    disable iff (`OVL_RESET_SIGNAL != 1&#x27;b1)
+      (!($isunknown(initialize)));
+  endproperty</code></pre></details><details><summary>OVL_CRC_XZ_IN_VALID_P</summary><pre><code>property OVL_CRC_XZ_IN_VALID_P;
+  @(posedge clock)
+    disable iff (`OVL_RESET_SIGNAL != 1&#x27;b1)
+      (!($isunknown(valid)));
+  endproperty</code></pre></details><details><summary>OVL_CRC_XZ_IN_LATCH_CRC_P</summary><pre><code>property OVL_CRC_XZ_IN_LATCH_CRC_P;
+  @(posedge clock)
+    disable iff (`OVL_RESET_SIGNAL != 1&#x27;b1)
+      (!($isunknown(crc_latch)));
+  endproperty</code></pre></details><details><summary>OVL_CRC_XZ_IN_CRC_P</summary><pre><code>property OVL_CRC_XZ_IN_CRC_P;
+  @(posedge clock)
+    disable iff (`OVL_RESET_SIGNAL != 1&#x27;b1)
+      (!($isunknown(crc)));
+  endproperty</code></pre></details><details><summary>OVL_CRC_XZ_IN_COMPARE_P</summary><pre><code>property OVL_CRC_XZ_IN_COMPARE_P;
+  @(posedge clock)
+    disable iff (`OVL_RESET_SIGNAL != 1&#x27;b1)
+      (!($isunknown(compare)));
+  endproperty</code></pre></details><h3>原始失败诊断文本</h3><p>以下文本便于与工具报告交叉查找，触发条件见上面的对应属性和源码分支。</p><ul><li><code>Input CRC value did not match the expected CRC value</code></li><li><code>test_expr contains X or Z</code></li><li><code>initialize contains X or Z</code></li><li><code>valid contains X or Z</code></li><li><code>crc_latch contains X or Z</code></li><li><code>crc contains X or Z</code></li><li><code> contains X or Z</code></li><li><code></code></li></ul><h3>命名 cover property 标签</h3><ul><li><code>cover_values_checked</code></li><li><code>cover_crc_value_check</code></li><li><code>cover_crc_computations_checked</code></li><li><code>cover_cycles_checked</code></li></ul><h2 id="source">7. 源码与官方参考</h2><p>Wrapper 中识别的实现选择宏：OVL_SVA。这是源码分支清单，不代表当前工具均支持。</p><ul><li><a href="../reference/code/ovl_crc.v.html">ovl_crc.v（带行号）</a> · <a href="../sources/ovl_crc.v">原文件</a></li><li><a href="../reference/code/sva05/ovl_crc_logic.sv.html">./sva05/ovl_crc_logic.sv（带行号）</a> · <a href="../sources/sva05/ovl_crc_logic.sv">原文件</a></li><li><a href="../sources/docs/ovl_lrm.pdf#page=102">OVL V2 LRM：ovl_crc，第 102–112 页</a>。旧版接口的准确签名以本页旧 wrapper 为准。</li></ul><p class="meta">Wrapper SHA-256：<code>faa81ada62cb875e514e920cfffa986a02c1bf4ef74a42a12c2761e502318780</code></p><h3>同类 checker</h3><p><a href="../checkers/ovl_bits.html">ovl_bits</a> · <a href="../checkers/ovl_code_distance.html">ovl_code_distance</a> · <a href="../checkers/ovl_even_parity.html">ovl_even_parity</a> · <a href="../checkers/ovl_odd_parity.html">ovl_odd_parity</a> · <a href="../checkers/ovl_one_hot.html">ovl_one_hot</a> · <a href="../checkers/ovl_zero_one_hot.html">ovl_zero_one_hot</a> · <a href="../checkers/ovl_one_cold.html">ovl_one_cold</a> · <a href="../checkers/ovl_mutex.html">ovl_mutex</a> · <a href="../checkers/ovl_never_unknown.html">ovl_never_unknown</a> · <a href="../checkers/ovl_never_unknown_async.html">ovl_never_unknown_async</a> · <a href="../checkers/ovl_no_contention.html">ovl_no_contention</a></p><footer>范围：本地 std_ovl_v2p8.1_Apr2014；2026-11-08 整理。中文说明为源码导读，原始实现保留 Accellera 版权声明。模板未经逐项编译或形式证明。<br><a href="../reference/manifest.json">源文件与 SHA-256 清单</a> · <a href="https://www.accellera.org/downloads/standards/ovl">Accellera OVL</a></footer></main></body></html>

@@ -1,0 +1,27 @@
+// Interface template only; not a standalone testbench.
+// Override dimensions/timing/check enables to match the DUT.
+`include "std_ovl_defines.h"
+ovl_arbiter #(
+  .severity_level(`OVL_SEVERITY_DEFAULT),
+  .width(2),
+  .priority_width(1),
+  .min_cks(1),
+  .max_cks(0),
+  .one_cycle_gnt_check(1),
+  .priority_check(0),
+  .arbitration_rule(0),
+  .property_type(`OVL_PROPERTY_DEFAULT),
+  .msg(`OVL_MSG_DEFAULT),
+  .coverage_level(`OVL_COVER_DEFAULT),
+  .clock_edge(`OVL_CLOCK_EDGE_DEFAULT),
+  .reset_polarity(`OVL_RESET_POLARITY_DEFAULT),
+  .gating_type(`OVL_GATING_TYPE_DEFAULT)
+) u_ovl_arbiter (
+  .clock(clk),
+  .reset(rst_n),
+  .enable(1'b1),
+  .reqs(reqs),
+  .gnts(gnts),
+  .priorities(priorities),
+  .fire()
+);

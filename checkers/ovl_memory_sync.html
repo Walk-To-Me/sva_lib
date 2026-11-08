@@ -1,0 +1,119 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ovl_memory_sync — 同步存储器参考检查 · OVL 中文手册</title><link rel="stylesheet" href="../assets/style.css"></head><body><header><small>OVL 2.8.1 / 源码对照手册</small><nav><a href="../index.html">分类目录</a><a href="../common.html">接入与 formal 指南</a><a href="../errata.html">实现差异与易错点</a><a href="../legacy.html">旧版接口</a></nav></header><main><h1>ovl_memory_sync — 同步存储器参考检查</h1><span class="tag">FIFO、栈与存储器</span> <span class="tag">OVL V2 接口</span><p class="lead">分别在 r_clock/w_clock 有效沿观察 ren/wen，检查地址、初始化及可选数据一致性。</p><nav class="toc"><a href="#semantics">语义</a><a href="#parameters">参数</a><a href="#ports">端口</a><a href="#examples">例子</a><a href="#formal">Formal</a><a href="#sva">SVA 属性</a><a href="#source">来源</a></nav><h2 id="semantics">1. 检查语义与触发时机</h2><p>addr_check/init_check 默认开启，value_check 默认关闭。可选冲突、一次读/写检查；pass_thru 决定同地址同拍读写的数据关系。不是任意 read latency 的自动适配器。</p><p>双时钟并不等于 CDC 正确性证明；冲突检查要求适用的时钟关系，数据延迟须由外层适配。</p><p>以下说明以随包 SVA 实现为重点。复位后的首次有效采样、历史状态有效位以及 generate 条件会影响检查起点；属性原文与完整源码可在本页下方对照。</p><h2 id="parameters">2. 完整参数表</h2><p>按 wrapper 声明顺序列出。默认表达式逐字取自源码；宏的最终值可被编译选项或用户头文件覆盖。标为内部/派生参数的条目不建议手动覆盖。</p><div class="scroll"><table><thead><tr><th>参数</th><th>源码默认值</th><th>作用与配置注意</th></tr></thead><tbody><tr><td><code>severity_level</code></td><td><code>`OVL_SEVERITY_DEFAULT</code></td><td>失败报告的严重级别：OVL_FATAL、OVL_ERROR、OVL_WARNING、OVL_INFO；不是改变逻辑正确性的开关。</td></tr><tr><td><code>data_width</code></td><td><code>1</code></td><td>存储器数据宽度；CRC 中为完整数据项宽度，0 表示采用输入 width。</td></tr><tr><td><code>addr_width</code></td><td><code>1</code></td><td>存储器地址位宽。</td></tr><tr><td><code>mem_size</code></td><td><code>2</code></td><td>参考存储器可跟踪的位置数；需覆盖使用的地址范围。</td></tr><tr><td><code>addr_check</code></td><td><code>1</code></td><td>开启地址在 start_addr/end_addr 范围内的检查。</td></tr><tr><td><code>init_check</code></td><td><code>1</code></td><td>开启读地址已写入/初始化的检查；不是清零 DUT 存储器。</td></tr><tr><td><code>conflict_check</code></td><td><code>0</code></td><td>同步存储器同地址同时读写冲突检查；要求该检查适用的共同读写时钟。</td></tr><tr><td><code>pass_thru</code></td><td><code>0</code></td><td>FIFO：允许空队列同拍直通；memory_sync：配置同地址读写的直通/读旧值关系。</td></tr><tr><td><code>one_read_check</code></td><td><code>0</code></td><td>限制同一数据项重复读；需要读写历史，不是限制每拍读端口数。</td></tr><tr><td><code>one_write_check</code></td><td><code>0</code></td><td>限制数据未按协议读取前重复写；不是写使能只能维持一拍。</td></tr><tr><td><code>value_check</code></td><td><code>0</code></td><td>1 开启参考数据一致性检查，0 不做数据值比较；FIFO 与 memory 的默认值不同。</td></tr><tr><td><code>property_type</code></td><td><code>`OVL_PROPERTY_DEFAULT</code></td><td>选择 OVL_ASSERT、OVL_ASSUME、OVL_IGNORE 或二态变体；只有支持的后端才把 ASSUME 实现为形式约束。不要把 DUT 要求改为 assume 来消除失败。</td></tr><tr><td><code>msg</code></td><td><code>`OVL_MSG_DEFAULT</code></td><td>实例的诊断文本，建议包含被检查接口与需求名称。</td></tr><tr><td><code>coverage_level</code></td><td><code>`OVL_COVER_DEFAULT</code></td><td>覆盖层级位掩码；NONE=0、SANITY=1、BASIC=2、CORNER=4、STATISTIC=8、ALL=15。同时受 OVL_COVER_ON 控制。</td></tr><tr><td><code>wen_edge</code></td><td><code>`OVL_CLOCK_EDGE_DEFAULT</code></td><td>写访问的有效边沿，memory_sync 针对 w_clock，memory_async 针对 wen。</td></tr><tr><td><code>ren_edge</code></td><td><code>`OVL_CLOCK_EDGE_DEFAULT</code></td><td>读访问的有效边沿，memory_sync 针对 r_clock，memory_async 针对 ren。</td></tr><tr><td><code>reset_polarity</code></td><td><code>`OVL_RESET_POLARITY_DEFAULT</code></td><td>复位有效电平：OVL_ACTIVE_LOW 或 OVL_ACTIVE_HIGH；不要因端口名为 reset 就默认高有效。</td></tr><tr><td><code>gating_type</code></td><td><code>`OVL_GATING_TYPE_DEFAULT</code></td><td>OVL_GATE_CLOCK 暂停时钟采样；OVL_GATE_RESET 用 enable 参与复位；OVL_NONE 不使用门控。暂停与清空历史不是同一语义。</td></tr><tr><td><code>assert_name</code></td><td><code>&quot;OVL_MEMORY_SYNC&quot;</code></td><td>内部诊断标识。源码注明不应修改。</td></tr></tbody></table></div><h2 id="ports">3. 完整端口表</h2><div class="scroll"><table><thead><tr><th>端口</th><th>方向</th><th>位宽表达式</th><th>连接含义</th></tr></thead><tbody><tr><td><code>reset</code></td><td>input</td><td><code>1 bit</code></td><td>checker 复位输入；有效电平由 reset_polarity 决定。</td></tr><tr><td><code>enable</code></td><td>input</td><td><code>1 bit</code></td><td>OVL V2 门控输入，意义由 gating_type 决定；不一定只是 disable iff。</td></tr><tr><td><code>ren</code></td><td>input</td><td><code>1 bit</code></td><td>同步版本为读使能；异步版本其有效边沿就是读事件。</td></tr><tr><td><code>wen</code></td><td>input</td><td><code>1 bit</code></td><td>同步版本为写使能；异步版本其有效边沿就是写事件。</td></tr><tr><td><code>r_clock</code></td><td>input</td><td><code>1 bit</code></td><td>同步存储器读时钟。</td></tr><tr><td><code>w_clock</code></td><td>input</td><td><code>1 bit</code></td><td>同步存储器写时钟。</td></tr><tr><td><code>start_addr</code></td><td>input</td><td><code>[addr_width-1 : 0]</code></td><td>有效地址闭区间起点。</td></tr><tr><td><code>end_addr</code></td><td>input</td><td><code>[addr_width-1 : 0]</code></td><td>有效地址闭区间终点。</td></tr><tr><td><code>raddr</code></td><td>input</td><td><code>[addr_width-1 : 0]</code></td><td>读地址。</td></tr><tr><td><code>rdata</code></td><td>input</td><td><code>[data_width-1 : 0]</code></td><td>按 checker 采样点提供的读出数据。</td></tr><tr><td><code>waddr</code></td><td>input</td><td><code>[addr_width-1 : 0]</code></td><td>写地址。</td></tr><tr><td><code>wdata</code></td><td>input</td><td><code>[data_width-1 : 0]</code></td><td>写入数据。</td></tr><tr><td><code>fire</code></td><td>output</td><td><code>[`OVL_FIRE_WIDTH-1 : 0]</code></td><td>事件汇总输出；部分 wrapper 在 SVA 分支将其绑零，见本页实现提示。</td></tr></tbody></table></div><h2 id="examples">4. 合法与违例场景</h2><div class="grid"><div class="card pass"><h3>合法 / 期望覆盖场景</h3><p>value_check=1，地址 a 写 A，随后读 a 得 A。</p></div><div class="card fail"><h3>违例 / 覆盖缺口场景</h3><p>读出值不同；init_check=1 时读从未写过的地址。</p></div></div><p>示例中的周期指 checker 的有效采样沿；“变化”通常指相邻采样值变化。场景是语义说明，不代表下面保留默认参数的模板已配置成该场景。</p><h3>命名参数 / 命名端口连接模板</h3><p>这是接线片段，不是独立可运行的 testbench。需声明并驱动信号，设置实际宽度、复位极性、延迟及检查开关，再将 wrapper 加入编译列表。<a href="../examples/ovl_memory_sync.sv">下载 SV 模板</a>。</p><pre><code>// Interface template only; not a standalone testbench.
+// Override dimensions/timing/check enables to match the DUT.
+`include &quot;std_ovl_defines.h&quot;
+ovl_memory_sync #(
+  .severity_level(`OVL_SEVERITY_DEFAULT),
+  .data_width(1),
+  .addr_width(1),
+  .mem_size(2),
+  .addr_check(1),
+  .init_check(1),
+  .conflict_check(0),
+  .pass_thru(0),
+  .one_read_check(0),
+  .one_write_check(0),
+  .value_check(0),
+  .property_type(`OVL_PROPERTY_DEFAULT),
+  .msg(`OVL_MSG_DEFAULT),
+  .coverage_level(`OVL_COVER_DEFAULT),
+  .wen_edge(`OVL_CLOCK_EDGE_DEFAULT),
+  .ren_edge(`OVL_CLOCK_EDGE_DEFAULT),
+  .reset_polarity(`OVL_RESET_POLARITY_DEFAULT),
+  .gating_type(`OVL_GATING_TYPE_DEFAULT)
+) u_ovl_memory_sync (
+  .reset(rst_n),
+  .enable(1&#x27;b1),
+  .ren(ren),
+  .wen(wen),
+  .r_clock(r_clock),
+  .w_clock(w_clock),
+  .start_addr(start_addr),
+  .end_addr(end_addr),
+  .raddr(raddr),
+  .rdata(rdata),
+  .waddr(waddr),
+  .wdata(wdata),
+  .fire()
+);
+</code></pre><h2 id="formal">5. Formal 接入与判读</h2><p>双时钟并不等于 CDC 正确性证明；冲突检查要求适用的时钟关系，数据延迟须由外层适配。</p><ul><li>验证 DUT 的要求使用 OVL_ASSERT；只有外部环境协议才适合作为 OVL_ASSUME。先检查 elaboration 后生成的属性数量与类型。</li><li>复位应初始化 checker 的历史状态和参考模型；不要永久拉住复位或 enable=0。确认触发事件可达，避免 antecedent 永远为假的空证明。</li><li>将安全断言结果、超时/未决结果与 cover 可达性分别记录。仿真跑过若干波形不等于形式证明。</li></ul><p>参考队列/存储器会扩大状态空间。先使用小 depth、短数据宽度验证接线，再扩大参数；如采用任意地址/任意数据抽象，需单独证明抽象保持原需求，不能仅减少被检查的数据。</p><p class="note">此 wrapper 的 SVA 分支将 fire 绑为 0。不能用 fire==0 证明检查通过；必须读取工具中的原生 assert/assume/cover 结果。</p><p>更多复位、门控、X/Z 与编译宏说明见 <a href="../common.html">公共接入指南</a>。本页没有声称所有配置均在 VC Formal 上经过编译或证明。</p><h2 id="sva">6. 属性、诊断与覆盖</h2><p>下面是源码中的命名 property 定义，包含宏分支；同名属性可在互斥 generate 分支中出现。它们不是“全部同时启用”的断言清单。实际启用条件、参考状态更新及 assert/assume 实例请看完整源码。</p><details><summary>OVL_MEMORY_SYNC_VALUE_CHK_P</summary><pre><code>property OVL_MEMORY_SYNC_VALUE_CHK_P;
+    @(posedge rd_clk)
+    disable iff (`OVL_RESET_SIGNAL != 1&#x27;b1)
+      ren_ok &amp;&amp; (sva_v_mem_addr_init[temp_raddr] ||
+         (wen_ok &amp;&amp; pass_thru &amp;&amp; (raddr == waddr))) |-&gt;
+      ((!(pass_thru &amp;&amp; (raddr == waddr)&amp;&amp; wen) ||
+       (rdata == wdata)) &amp;&amp;
+      ((pass_thru &amp;&amp; ( raddr == waddr)&amp;&amp; wen) ||
+        ( sva_w_data == rdata)));
+  endproperty</code></pre></details><details><summary>OVL_MEMORY_SYNC_INIT_CHK_P</summary><pre><code>property OVL_MEMORY_SYNC_INIT_CHK_P;
+    @(posedge rd_clk)
+    disable iff (`OVL_RESET_SIGNAL != 1&#x27;b1)
+      ren_ok |-&gt;
+      (sva_v_mem_addr_init[temp_raddr] || // normal read
+       wen_ok &amp;&amp; pass_thru &amp;&amp;
+       (raddr == waddr));                 //simultaneous r/w
+  endproperty</code></pre></details><details><summary>OVL_MEMORY_SYNC_WADDR_CHK_P</summary><pre><code>property OVL_MEMORY_SYNC_WADDR_CHK_P;
+    @(posedge wr_clk)
+    disable iff (`OVL_RESET_SIGNAL != 1&#x27;b1)
+      wen |-&gt; waddr_check;
+  endproperty</code></pre></details><details><summary>OVL_MEMORY_SYNC_RADDR_CHK_P</summary><pre><code>property OVL_MEMORY_SYNC_RADDR_CHK_P;
+    @(posedge rd_clk)
+    disable iff (`OVL_RESET_SIGNAL != 1&#x27;b1)
+      ren |-&gt; raddr_check;
+  endproperty</code></pre></details><details><summary>OVL_MEMORY_SYNC_CONFLICT_CHK_P</summary><pre><code>property OVL_MEMORY_SYNC_CONFLICT_CHK_P;
+    @(posedge wr_clk)
+    disable iff (`OVL_RESET_SIGNAL != 1&#x27;b1)
+      wen_ok &amp;&amp; ren_ok |-&gt; !(raddr == waddr);
+  endproperty</code></pre></details><details><summary>OVL_MEMORY_SYNC_READ1_CHK_P</summary><pre><code>property OVL_MEMORY_SYNC_READ1_CHK_P;
+    @(posedge rd_clk)
+    disable iff (`OVL_RESET_SIGNAL != 1&#x27;b1)
+      (ren_ok &amp;&amp; sva_v_mem_addr_init[temp_raddr]) |-&gt;
+         (sva_v_mem_read1 || (wen_ok &amp;&amp; pass_thru &amp;&amp; (raddr == waddr)));
+  endproperty</code></pre></details><details><summary>OVL_MEMORY_SYNC_WRITE1_CHK_P</summary><pre><code>property OVL_MEMORY_SYNC_WRITE1_CHK_P;
+    @(posedge wr_clk)
+    disable iff (`OVL_RESET_SIGNAL != 1&#x27;b1)
+      wen_ok |-&gt;
+      (sva_b_mem_not_init) ||              // not yet initialized
+      (sva_b_mem_read)     ||              // read
+      (!pass_thru &amp;&amp;
+       (raddr == waddr) &amp;&amp; ren_ok);        // no pass_thru read
+  endproperty</code></pre></details><details><summary>OVL_MEMORY_SYNC_XZ_ON_START_ADDR_RD_P</summary><pre><code>property OVL_MEMORY_SYNC_XZ_ON_START_ADDR_RD_P;
+    @(posedge rd_clk)
+    disable iff (`OVL_RESET_SIGNAL != 1&#x27;b1)
+    (!($isunknown(start_addr)));
+    endproperty</code></pre></details><details><summary>OVL_MEMORY_SYNC_XZ_ON_END_ADDR_RD_P</summary><pre><code>property OVL_MEMORY_SYNC_XZ_ON_END_ADDR_RD_P;
+    @(posedge rd_clk)
+    disable iff (`OVL_RESET_SIGNAL != 1&#x27;b1)
+    (!($isunknown(end_addr)));
+    endproperty</code></pre></details><details><summary>OVL_MEMORY_SYNC_XZ_ON_START_ADDR_WR_P</summary><pre><code>property OVL_MEMORY_SYNC_XZ_ON_START_ADDR_WR_P;
+    @(posedge wr_clk)
+    disable iff (`OVL_RESET_SIGNAL != 1&#x27;b1)
+    (!($isunknown(start_addr)));
+    endproperty</code></pre></details><details><summary>OVL_MEMORY_SYNC_XZ_ON_END_ADDR_WR_P</summary><pre><code>property OVL_MEMORY_SYNC_XZ_ON_END_ADDR_WR_P;
+    @(posedge wr_clk)
+    disable iff (`OVL_RESET_SIGNAL != 1&#x27;b1)
+    (!($isunknown(end_addr)));
+    endproperty</code></pre></details><details><summary>OVL_MEMORY_SYNC_XZ_ON_RADDR_P</summary><pre><code>property OVL_MEMORY_SYNC_XZ_ON_RADDR_P;
+    @(posedge rd_clk)
+    disable iff (`OVL_RESET_SIGNAL != 1&#x27;b1)
+    ren |-&gt; (!($isunknown(raddr)));
+    endproperty</code></pre></details><details><summary>OVL_MEMORY_SYNC_XZ_ON_RDATA_P</summary><pre><code>property OVL_MEMORY_SYNC_XZ_ON_RDATA_P;
+    @(posedge rd_clk)
+    disable iff (`OVL_RESET_SIGNAL != 1&#x27;b1)
+    ren_ok |-&gt; (!($isunknown(rdata)));
+    endproperty</code></pre></details><details><summary>OVL_MEMORY_SYNC_XZ_ON_WADDR_P</summary><pre><code>property OVL_MEMORY_SYNC_XZ_ON_WADDR_P;
+    @(posedge wr_clk)
+    disable iff (`OVL_RESET_SIGNAL != 1&#x27;b1)
+    wen |-&gt; (!($isunknown(waddr)));
+    endproperty</code></pre></details><details><summary>OVL_MEMORY_SYNC_XZ_ON_WDATA_P</summary><pre><code>property OVL_MEMORY_SYNC_XZ_ON_WDATA_P;
+    @(posedge wr_clk)
+    disable iff (`OVL_RESET_SIGNAL != 1&#x27;b1)
+    wen_ok |-&gt; (!($isunknown(wdata)));
+    endproperty</code></pre></details><details><summary>OVL_MEMORY_SYNC_XZ_ON_REN_P</summary><pre><code>property OVL_MEMORY_SYNC_XZ_ON_REN_P;
+    @(posedge rd_clk)
+    disable iff (`OVL_RESET_SIGNAL != 1&#x27;b1)
+    (!($isunknown(ren)));
+    endproperty</code></pre></details><details><summary>OVL_MEMORY_SYNC_XZ_ON_WEN_P</summary><pre><code>property OVL_MEMORY_SYNC_XZ_ON_WEN_P;
+    @(posedge wr_clk)
+    disable iff (`OVL_RESET_SIGNAL != 1&#x27;b1)
+    (!($isunknown(wen)));
+    endproperty</code></pre></details><h3>原始失败诊断文本</h3><p>以下文本便于与工具报告交叉查找，触发条件见上面的对应属性和源码分支。</p><ul><li><code>data read is not same as data written</code></li><li><code>uninitialized location is read</code></li><li><code>Read and Write comes together to same address</code></li><li><code>write address is not within range of start and end address</code></li><li><code>read address is not within range of start and end address</code></li><li><code>data is not read before it is overwritten</code></li><li><code>there is more than 1 read between 2 succesive writes</code></li><li><code>start address contains X or Z</code></li><li><code>end address contains X or Z</code></li><li><code>read address contains X or Z</code></li><li><code>read data contains X or Z</code></li><li><code>write address contains X or Z</code></li><li><code>write data contains X or Z</code></li><li><code>read enable contains X or Z</code></li><li><code>write enable contains X or Z</code></li><li><code></code></li></ul><h3>命名 cover property 标签</h3><ul><li><code>cover_number_of_reads</code></li><li><code>cover_number_of_writes</code></li><li><code>cover_write_followed_by_read</code></li><li><code>cover_two_or_more_writes_without_intervening_read</code></li><li><code>cover_two_or_more_reads_without_intervening_write</code></li><li><code>cover_simultaneous_read_and_write_to_same_addr</code></li><li><code>cover_simultaneous_read_and_write_to_different_addr</code></li><li><code>cover_read_to_start_addr</code></li><li><code>cover_write_to_start_addr</code></li><li><code>cover_read_to_end_addr</code></li><li><code>cover_write_to_end_addr</code></li><li><code>cover_write_followed_by_read_to_start_addr</code></li><li><code>cover_write_followed_by_read_to_end_addr</code></li></ul><h2 id="source">7. 源码与官方参考</h2><p>Wrapper 中识别的实现选择宏：OVL_SVA。这是源码分支清单，不代表当前工具均支持。</p><ul><li><a href="../reference/code/ovl_memory_sync.v.html">ovl_memory_sync.v（带行号）</a> · <a href="../sources/ovl_memory_sync.v">原文件</a></li><li><a href="../reference/code/sva05/ovl_memory_sync_logic.sv.html">./sva05/ovl_memory_sync_logic.sv（带行号）</a> · <a href="../sources/sva05/ovl_memory_sync_logic.sv">原文件</a></li><li><a href="../sources/docs/ovl_lrm.pdf#page=172">OVL V2 LRM：ovl_memory_sync，第 172–178 页</a>。旧版接口的准确签名以本页旧 wrapper 为准。</li></ul><p class="meta">Wrapper SHA-256：<code>5029a2719060eba078c05003e31df117d8badc16b7544316da4e83534a5d174b</code></p><h3>同类 checker</h3><p><a href="../checkers/ovl_fifo.html">ovl_fifo</a> · <a href="../checkers/ovl_fifo_index.html">ovl_fifo_index</a> · <a href="../checkers/ovl_multiport_fifo.html">ovl_multiport_fifo</a> · <a href="../checkers/ovl_stack.html">ovl_stack</a> · <a href="../checkers/ovl_memory_async.html">ovl_memory_async</a></p><footer>范围：本地 std_ovl_v2p8.1_Apr2014；2026-11-08 整理。中文说明为源码导读，原始实现保留 Accellera 版权声明。模板未经逐项编译或形式证明。<br><a href="../reference/manifest.json">源文件与 SHA-256 清单</a> · <a href="https://www.accellera.org/downloads/standards/ovl">Accellera OVL</a></footer></main></body></html>

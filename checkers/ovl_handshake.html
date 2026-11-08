@@ -1,0 +1,67 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ovl_handshake — 单事务请求应答协议 · OVL 中文手册</title><link rel="stylesheet" href="../assets/style.css"></head><body><header><small>OVL 2.8.1 / 源码对照手册</small><nav><a href="../index.html">分类目录</a><a href="../common.html">接入与 formal 指南</a><a href="../errata.html">实现差异与易错点</a><a href="../legacy.html">旧版接口</a></nav></header><main><h1>ovl_handshake — 单事务请求应答协议</h1><span class="tag">握手、仲裁与事务 ID</span> <span class="tag">OVL V2 接口</span><p class="lead">根据 req/ack 的采样上升事件追踪握手，并检查参数指定的响应期限与电平持续规则。</p><nav class="toc"><a href="#semantics">语义</a><a href="#parameters">参数</a><a href="#ports">端口</a><a href="#examples">例子</a><a href="#formal">Formal</a><a href="#sva">SVA 属性</a><a href="#source">来源</a></nav><h2 id="semantics">1. 检查语义与触发时机</h2><p>每个 ack 必须有待处理 request；前一事务未完成时不允许新的请求事件。req_drop、deassert_count、max_ack_length 决定请求保持、撤销和 ack 脉宽规则。</p><p>这是请求应答协议检查器，不等于 ready/valid；ready 可以预先为高，不能直接作为该 checker 的 ack。</p><p>以下说明以随包 SVA 实现为重点。复位后的首次有效采样、历史状态有效位以及 generate 条件会影响检查起点；属性原文与完整源码可在本页下方对照。</p><h2 id="parameters">2. 完整参数表</h2><p>按 wrapper 声明顺序列出。默认表达式逐字取自源码；宏的最终值可被编译选项或用户头文件覆盖。标为内部/派生参数的条目不建议手动覆盖。</p><div class="scroll"><table><thead><tr><th>参数</th><th>源码默认值</th><th>作用与配置注意</th></tr></thead><tbody><tr><td><code>severity_level</code></td><td><code>`OVL_SEVERITY_DEFAULT</code></td><td>失败报告的严重级别：OVL_FATAL、OVL_ERROR、OVL_WARNING、OVL_INFO；不是改变逻辑正确性的开关。</td></tr><tr><td><code>min_ack_cycle</code></td><td><code>0</code></td><td>请求到 ack 的最小周期延迟。</td></tr><tr><td><code>max_ack_cycle</code></td><td><code>0</code></td><td>请求到 ack 的最大周期延迟；0 关闭该最大等待检查。</td></tr><tr><td><code>req_drop</code></td><td><code>0</code></td><td>大于 0 时开启请求保持检查：req 上升后必须持续为高直到 ack 上升；0 不生成这一保持属性。名称不能理解为 1 允许提前撤销。</td></tr><tr><td><code>deassert_count</code></td><td><code>0</code></td><td>ack 上升且 req 仍高时，要求 req 在随后 0..deassert_count 拍内拉低；0 不生成该期限属性。</td></tr><tr><td><code>max_ack_length</code></td><td><code>0</code></td><td>ack 高电平的最大周期宽度，0 关闭该项上界。</td></tr><tr><td><code>property_type</code></td><td><code>`OVL_PROPERTY_DEFAULT</code></td><td>选择 OVL_ASSERT、OVL_ASSUME、OVL_IGNORE 或二态变体；只有支持的后端才把 ASSUME 实现为形式约束。不要把 DUT 要求改为 assume 来消除失败。</td></tr><tr><td><code>msg</code></td><td><code>`OVL_MSG_DEFAULT</code></td><td>实例的诊断文本，建议包含被检查接口与需求名称。</td></tr><tr><td><code>coverage_level</code></td><td><code>`OVL_COVER_DEFAULT</code></td><td>覆盖层级位掩码；NONE=0、SANITY=1、BASIC=2、CORNER=4、STATISTIC=8、ALL=15。同时受 OVL_COVER_ON 控制。</td></tr><tr><td><code>clock_edge</code></td><td><code>`OVL_CLOCK_EDGE_DEFAULT</code></td><td>checker 的时钟有效沿：OVL_POSEDGE、OVL_NEGEDGE 等；各后端支持情况需核对。</td></tr><tr><td><code>reset_polarity</code></td><td><code>`OVL_RESET_POLARITY_DEFAULT</code></td><td>复位有效电平：OVL_ACTIVE_LOW 或 OVL_ACTIVE_HIGH；不要因端口名为 reset 就默认高有效。</td></tr><tr><td><code>gating_type</code></td><td><code>`OVL_GATING_TYPE_DEFAULT</code></td><td>OVL_GATE_CLOCK 暂停时钟采样；OVL_GATE_RESET 用 enable 参与复位；OVL_NONE 不使用门控。暂停与清空历史不是同一语义。</td></tr><tr><td><code>assert_name</code></td><td><code>&quot;OVL_HANDSHAKE&quot;</code></td><td>内部诊断标识。源码注明不应修改。</td></tr></tbody></table></div><h2 id="ports">3. 完整端口表</h2><div class="scroll"><table><thead><tr><th>端口</th><th>方向</th><th>位宽表达式</th><th>连接含义</th></tr></thead><tbody><tr><td><code>clock</code></td><td>input</td><td><code>1 bit</code></td><td>采样时钟；有效沿由 clock_edge 决定。</td></tr><tr><td><code>reset</code></td><td>input</td><td><code>1 bit</code></td><td>checker 复位输入；有效电平由 reset_polarity 决定。</td></tr><tr><td><code>enable</code></td><td>input</td><td><code>1 bit</code></td><td>OVL V2 门控输入，意义由 gating_type 决定；不一定只是 disable iff。</td></tr><tr><td><code>req</code></td><td>input</td><td><code>1 bit</code></td><td>请求；handshake 按事件边沿解释，req_ack_unique 按每拍有效事件解释。</td></tr><tr><td><code>ack</code></td><td>input</td><td><code>1 bit</code></td><td>响应；其匹配与边沿/电平语义取决于 checker。</td></tr><tr><td><code>fire</code></td><td>output</td><td><code>[`OVL_FIRE_WIDTH-1:0]</code></td><td>事件汇总输出；部分 wrapper 在 SVA 分支将其绑零，见本页实现提示。</td></tr></tbody></table></div><h2 id="examples">4. 合法与违例场景</h2><div class="grid"><div class="card pass"><h3>合法 / 期望覆盖场景</h3><p>发出一个请求，在允许窗口内出现一个 ack 上升沿。</p></div><div class="card fail"><h3>违例 / 覆盖缺口场景</h3><p>无请求时 ack，或 pending 时再次产生请求上升。</p></div></div><p>示例中的周期指 checker 的有效采样沿；“变化”通常指相邻采样值变化。场景是语义说明，不代表下面保留默认参数的模板已配置成该场景。</p><h3>命名参数 / 命名端口连接模板</h3><p>这是接线片段，不是独立可运行的 testbench。需声明并驱动信号，设置实际宽度、复位极性、延迟及检查开关，再将 wrapper 加入编译列表。<a href="../examples/ovl_handshake.sv">下载 SV 模板</a>。</p><pre><code>// Interface template only; not a standalone testbench.
+// Override dimensions/timing/check enables to match the DUT.
+`include &quot;std_ovl_defines.h&quot;
+ovl_handshake #(
+  .severity_level(`OVL_SEVERITY_DEFAULT),
+  .min_ack_cycle(0),
+  .max_ack_cycle(0),
+  .req_drop(0),
+  .deassert_count(0),
+  .max_ack_length(0),
+  .property_type(`OVL_PROPERTY_DEFAULT),
+  .msg(`OVL_MSG_DEFAULT),
+  .coverage_level(`OVL_COVER_DEFAULT),
+  .clock_edge(`OVL_CLOCK_EDGE_DEFAULT),
+  .reset_polarity(`OVL_RESET_POLARITY_DEFAULT),
+  .gating_type(`OVL_GATING_TYPE_DEFAULT)
+) u_ovl_handshake (
+  .clock(clk),
+  .reset(rst_n),
+  .enable(1&#x27;b1),
+  .req(req),
+  .ack(ack),
+  .fire()
+);
+</code></pre><h2 id="formal">5. Formal 接入与判读</h2><p>这是请求应答协议检查器，不等于 ready/valid；ready 可以预先为高，不能直接作为该 checker 的 ack。</p><ul><li>验证 DUT 的要求使用 OVL_ASSERT；只有外部环境协议才适合作为 OVL_ASSUME。先检查 elaboration 后生成的属性数量与类型。</li><li>复位应初始化 checker 的历史状态和参考模型；不要永久拉住复位或 enable=0。确认触发事件可达，避免 antecedent 永远为假的空证明。</li><li>将安全断言结果、超时/未决结果与 cover 可达性分别记录。仿真跑过若干波形不等于形式证明。</li></ul><p class="note">此 wrapper 的 SVA 分支将 fire 绑为 0。不能用 fire==0 证明检查通过；必须读取工具中的原生 assert/assume/cover 结果。</p><p>更多复位、门控、X/Z 与编译宏说明见 <a href="../common.html">公共接入指南</a>。本页没有声称所有配置均在 VC Formal 上经过编译或证明。</p><h2 id="sva">6. 属性、诊断与覆盖</h2><p>下面是源码中的命名 property 定义，包含宏分支；同名属性可在互斥 generate 分支中出现。它们不是“全部同时启用”的断言清单。实际启用条件、参考状态更新及 assert/assume 实例请看完整源码。</p><details><summary>ASSERT_HANDSHAKE_ACK_MIN_CYCLE_P</summary><pre><code>property ASSERT_HANDSHAKE_ACK_MIN_CYCLE_P;
+  @(posedge clk)
+  disable iff (`OVL_RESET_SIGNAL != 1&#x27;b1)
+  $rose(req) |-&gt; (!($rose(ack))) [*min_ack_cycle];
+  endproperty</code></pre></details><details><summary>ASSERT_HANDSHAKE_ACK_MAX_CYCLE_P</summary><pre><code>property ASSERT_HANDSHAKE_ACK_MAX_CYCLE_P;
+  @(posedge clk)
+  disable iff (`OVL_RESET_SIGNAL != 1&#x27;b1)
+  $rose(req) &amp;&amp; (!$rose(ack)) |-&gt;
+  (##[1:(max_ack_cycle &gt; 0 ? max_ack_cycle : 2)] ($rose(ack) || ($rose(req) &amp;&amp; (req_drop == 1&#x27;b1))));
+  endproperty</code></pre></details><details><summary>ASSERT_HANDSHAKE_ACK_MAX_LENGTH_P</summary><pre><code>property ASSERT_HANDSHAKE_ACK_MAX_LENGTH_P;
+  @(posedge clk)
+  disable iff (`OVL_RESET_SIGNAL != 1&#x27;b1)
+  $rose(ack) |-&gt; (ack)[*1:(max_ack_length &gt; 0 ? max_ack_length : 2) ] ##1 (!ack);
+  endproperty</code></pre></details><details><summary>ASSERT_HANDSHAKE_REQ_DROP_P</summary><pre><code>property ASSERT_HANDSHAKE_REQ_DROP_P;
+  @(posedge clk)
+  disable iff (`OVL_RESET_SIGNAL != 1&#x27;b1)
+  $rose(req) |-&gt; (req[*1:$]) ##0 $rose(ack);
+  endproperty</code></pre></details><details><summary>ASSERT_HANDSHAKE_MULTIPLE_REQ_P</summary><pre><code>property ASSERT_HANDSHAKE_MULTIPLE_REQ_P;
+  @(posedge clk)
+  disable iff (`OVL_RESET_SIGNAL != 1&#x27;b1)
+  not (($rose(req) &amp;&amp; !ack) ##1 (req &amp;&amp; !ack) [*0:$]
+  ##1 (!req &amp;&amp; !ack) [*1:$] ##1 ($rose(req)));
+  endproperty</code></pre></details><details><summary>ASSERT_HANDSHAKE_REQ_DEASSERT_P</summary><pre><code>property ASSERT_HANDSHAKE_REQ_DEASSERT_P;
+  @(posedge clk)
+  disable iff (`OVL_RESET_SIGNAL != 1&#x27;b1)
+  ($rose(ack) &amp;&amp; (req)) |-&gt; (##[0:deassert_count](!req));
+  endproperty</code></pre></details><details><summary>ASSERT_HANDSHAKE_ACK_WITHOUT_REQ_FIRST_REQ_P</summary><pre><code>property ASSERT_HANDSHAKE_ACK_WITHOUT_REQ_FIRST_REQ_P;
+  @(posedge clk)
+  disable iff (`OVL_RESET_SIGNAL != 1&#x27;b1)
+  $rose(ack) |-&gt; (first_req || req);
+  endproperty</code></pre></details><details><summary>ASSERT_HANDSHAKE_ACK_WITHOUT_REQ_SUBSEQUENT_REQ_P</summary><pre><code>property ASSERT_HANDSHAKE_ACK_WITHOUT_REQ_SUBSEQUENT_REQ_P;
+  @(posedge clk)
+  disable iff (`OVL_RESET_SIGNAL != 1&#x27;b1)
+  $fell(ack) |-&gt; $rose(req) within (!ack [*0:$] ##1 ack);
+  endproperty</code></pre></details><details><summary>ASSERT_HANDSHAKE_REQ_XZ_P</summary><pre><code>property ASSERT_HANDSHAKE_REQ_XZ_P;
+    @(posedge clk)
+    disable iff (`OVL_RESET_SIGNAL != 1&#x27;b1)
+    !$isunknown( req );
+    endproperty</code></pre></details><details><summary>ASSERT_HANDSHAKE_ACK_XZ_P</summary><pre><code>property ASSERT_HANDSHAKE_ACK_XZ_P;
+    @(posedge clk)
+    disable iff (`OVL_RESET_SIGNAL != 1&#x27;b1)
+    !$isunknown( ack );
+    endproperty</code></pre></details><h3>原始失败诊断文本</h3><p>以下文本便于与工具报告交叉查找，触发条件见上面的对应属性和源码分支。</p><ul><li><code>Acknowledge asserted before elapse of specified minimum min_ack_cycle cycles from request</code></li><li><code>Acknowledge is not asserted within specified maximum max_ack_cycle cycles from request</code></li><li><code>Duration of continuous asserted state of acknowledge violates specified maximum ack_max_length cycles</code></li><li><code>Duration of continuous asserted state of request violates specified deassert_count cycles</code></li><li><code>Request is deasserted before acknowledgement arrives</code></li><li><code>New request arrives before previous request is acknowledged</code></li><li><code>Acknowledge arrives without a pending request</code></li><li><code>req contains X or Z</code></li><li><code>ack contains X or Z</code></li><li><code></code></li></ul><h3>命名 cover property 标签</h3><ul><li><code>cover_req_asserted</code></li><li><code>cover_ack_asserted</code></li></ul><h2 id="source">7. 源码与官方参考</h2><p>Wrapper 中识别的实现选择宏：OVL_SVA, OVL_VERILOG, OVL_PSL。这是源码分支清单，不代表当前工具均支持。</p><ul><li><a href="../reference/code/ovl_handshake.v.html">ovl_handshake.v（带行号）</a> · <a href="../sources/ovl_handshake.v">原文件</a></li><li><a href="../reference/code/sva05/assert_handshake_logic.sv.html">./sva05/assert_handshake_logic.sv（带行号）</a> · <a href="../sources/sva05/assert_handshake_logic.sv">原文件</a></li><li><a href="../sources/docs/ovl_lrm.pdf#page=149">OVL V2 LRM：ovl_handshake，第 149–155 页</a>。旧版接口的准确签名以本页旧 wrapper 为准。</li></ul><p class="meta">Wrapper SHA-256：<code>2339befc3d82fe45da62137946c13dbd394dc0c5bbf3741399c795ee5adb51d1</code></p><h3>同类 checker</h3><p><a href="../checkers/ovl_req_ack_unique.html">ovl_req_ack_unique</a> · <a href="../checkers/ovl_req_requires.html">ovl_req_requires</a> · <a href="../checkers/ovl_arbiter.html">ovl_arbiter</a> · <a href="../checkers/ovl_valid_id.html">ovl_valid_id</a></p><footer>范围：本地 std_ovl_v2p8.1_Apr2014；2026-11-08 整理。中文说明为源码导读，原始实现保留 Accellera 版权声明。模板未经逐项编译或形式证明。<br><a href="../reference/manifest.json">源文件与 SHA-256 清单</a> · <a href="https://www.accellera.org/downloads/standards/ovl">Accellera OVL</a></footer></main></body></html>

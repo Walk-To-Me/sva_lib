@@ -1,0 +1,10 @@
+{
+  "v2_pages": 55,
+  "legacy_pages": 33,
+  "templates": 88,
+  "html_pages": 245,
+  "local_links_checked": 24051,
+  "broken_links": 0,
+  "interface_validation": "Every template port matches its wrapper port inventory; defaults extracted from wrappers.",
+  "execution_validation": "Templates are fragments, not individually compiled or formally proven."
+}

@@ -1,0 +1,4 @@
+* text=auto eol=lf
+sources/** -text -whitespace
+reference/code/** -whitespace
+*.pdf binary
